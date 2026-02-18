@@ -1,0 +1,144 @@
+let video;
+let prevFrame;
+let threshold = 150;  // 動き検出のしきい値
+let blobs = [];
+let chgxy =0.5;       // 動画倍率      動画縦横サイズに掛け算_今の動画で0.5～1.5くらい_大きすぎるとフリーズ
+let canx = 640;       // 動画横サイズ  動画サイズを見て変更
+let cany = 360;       // 動画縦サイズ  動画サイズを見て変更
+let txt = 20;         // 文字サイズ    動画サイズを見て変更
+let boxvar = 1;       // ボックスの縁太さ
+let mrgvar = 1;       // ボックスをつなぐ線太さ
+
+canx=canx * chgxy;
+cany=cany * chgxy;
+
+function setup() {
+  createCanvas(canx, cany);
+  pixelDensity(1);
+
+  // 動画を読み込み
+  video = createVideo('https://raw.githubusercontent.com/takask196-coder/p5gs_video_s/main/video2.mp4');
+  video.size(canx, cany);
+  video.hide();
+  video.loop();  // 自動再生
+}
+
+function draw() {
+  image(video, 0, 0, width, height);
+  video.loadPixels();
+  blobs = [];
+
+  if (video.pixels.length > 0) {
+    if (prevFrame) {
+      prevFrame.loadPixels();
+
+      // --- 動き検出 ---
+      let motionMap = Array(video.width).fill().map(() => Array(video.height).fill(0));
+      for (let x = 0; x < video.width; x++) {
+        for (let y = 0; y < video.height; y++) {
+          let index = (x + y * video.width) * 4;
+          let r1 = video.pixels[index + 0];
+          let g1 = video.pixels[index + 1];
+          let b1 = video.pixels[index + 2];
+          let r2 = prevFrame.pixels[index + 0];
+          let g2 = prevFrame.pixels[index + 1];
+          let b2 = prevFrame.pixels[index + 2];
+          let diff = dist(r1, g1, b1, r2, g2, b2);
+          if (diff > threshold) motionMap[x][y] = 1;
+        }
+      }
+
+      // --- ラベリング＆Blob収集 ---
+      let visited = Array(video.width).fill().map(() => Array(video.height).fill(false));
+      for (let x = 0; x < video.width; x++) {
+        for (let y = 0; y < video.height; y++) {
+          if (motionMap[x][y] === 1 && !visited[x][y]) {
+            let blobPixels = floodFill(x, y, motionMap, visited);
+            if (blobPixels.length > 50) blobs.push(blobPixels);
+          }
+        }
+      }
+
+      // --- バウンディングボックス描画と中心座標取得 ---
+      stroke(255, 255, 255); // 線の色
+　　　fill(1, 1, 1, 50); // 半透明の塗り
+　　　strokeWeight(boxvar);
+      noFill();
+
+      let centers = [];  // 座標リスト　中心座標_old
+
+      for (let blob of blobs) {
+        let minX = width, minY = height, maxX = 0, maxY = 0;
+        for (let p of blob) {
+          if (p.x < minX) minX = p.x;
+          if (p.y < minY) minY = p.y;
+          if (p.x > maxX) maxX = p.x;
+          if (p.y > maxY) maxY = p.y;
+        }
+
+        rect(minX, minY, maxX - minX, maxY - minY);
+        centers.push({x: minX, y: minY, connections: 0});
+        // 左上に座標表示
+        textSize(txt);           // 文字サイズ
+        text(minX + "," + minY, minX + -5, minY - 5); // 左上に少しずらして表示
+      }
+
+      // --- 線を最大2本制限で描画 ---
+      stroke(255, 255, 255);
+      strokeWeight(mrgvar);
+
+      // 距離が近い順に線を引く
+      for (let i = 0; i < centers.length; i++) {
+        // 距離順にソート
+        let distances = [];
+        for (let j = 0; j < centers.length; j++) {
+          if (i === j) continue;
+          let d = dist(centers[i].x, centers[i].y, centers[j].x, centers[j].y);
+          distances.push({index: j, distance: d});
+        }
+        distances.sort((a, b) => a.distance - b.distance);
+
+        for (let k = 0; k < distances.length && centers[i].connections < 2; k++) {
+          let j = distances[k].index;
+          if (centers[j].connections < 2) {
+            line(centers[i].x, centers[i].y, centers[j].x, centers[j].y);
+            centers[i].connections++;
+            centers[j].connections++;
+          }
+        }
+      }
+    }
+
+    // --- フレーム保存 ---
+    prevFrame = createImage(video.width, video.height);
+    prevFrame.copy(video, 0, 0, video.width, video.height, 0, 0, video.width, video.height);
+  }
+}
+
+// --- Flood Fill ---
+function floodFill(startX, startY, motionMap, visited) {
+  let stack = [{x: startX, y: startY}];
+  let blob = [];
+
+  while (stack.length > 0) {
+    let {x, y} = stack.pop();
+    if (x < 0 || x >= motionMap.length || y < 0 || y >= motionMap[0].length) continue;
+    if (visited[x][y]) continue;
+    if (motionMap[x][y] === 0) continue;
+
+    visited[x][y] = true;
+    blob.push({x, y});
+
+    // 近傍探索（8方向）
+    stack.push({x: x+1, y});
+    stack.push({x: x-1, y});
+    stack.push({x,   y: y+1});
+    stack.push({x,   y: y-1});
+    stack.push({x: x+1, y: y+1});
+    stack.push({x: x-1, y: y-1});
+    stack.push({x: x+1, y: y-1});
+    stack.push({x: x-1, y: y+1});
+  }
+
+  return blob;
+}
